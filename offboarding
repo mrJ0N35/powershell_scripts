@@ -1,0 +1,52 @@
+```$Token = "OKTA API TOKEN"
+
+##Active Directory##
+#Imports AD module and prompt for username "firstname.lastname".  EXAMPLE - test.user
+Import-Module ActiveDirectory
+$sAMAccountName = Read-Host -Prompt "Enter Username"
+
+#Generate random string for password reset
+$Random = -join ((65..90) + (97..122) | Get-Random -Count 16 | % {[char]$_})
+
+#Set random password for user
+Set-ADAccountPassword -Identity $sAMAccountName -Reset -NewPassword (ConvertTo-SecureString -AsPlainText "P!1$Random" -Force)
+Write-Host "Password for $sAMAccountName has been reset"
+
+#Export list of groups user is a Member Of
+(Get-ADUser $sAMAccountName).Name | Add-Content C:\scripts\Offboarding\offboarded_user_groups\$sAMAccountName.txt
+Get-ADPrincipalGroupMembership $sAMAccountName | Select Name | Add-Content C:\scripts\Offboarding\offboarded_user_groups\$sAMAccountName.txt
+Write-Host "Groups for $sAMAccountName have been exported"
+
+#Remove user from all groups except 'Domain Users'
+Get-ADPrincipalGroupMembership -Identity $sAMAccountName | where {$_.Name -notlike "Domain Users"} |% {Remove-ADPrincipalGroupMembership -Identity $sAMAccountName -MemberOf $_ -Confirm:$false}
+Write-Host "$sAMAccountName has been removed from groups"
+
+#Disable user account
+Disable-ADAccount -Identity $sAMAccountName
+Write-Host "$sAMAccountName has been disabled"
+
+#Move disabled user to Disabled OU in ADUC
+Move-ADObject -Identity (Get-ADuser $sAMAccountName).objectGUID -TargetPath 'OU=DisabledUsers,DC=securetempus,DC=net'
+Write-Host "$sAMAccountName has been moved to Disabled OU"
+
+##Okta##
+#Import Okta module
+Import-Module Okta.Core.Automation
+$username = $sAMAccountName + "@company.com"
+
+#Connect to Okta using API Token
+Connect-Okta -Token $Token -FullDomain https://tempus.okta.com
+
+Reset-OktaUserFactor $username
+Write-Host "$username MFA reset"
+
+Disable-OktaUser $username
+Write-Host "$username Okta Account Deactivated"
+
+##Office365##
+#Connect to O365
+Connect-MsolService
+#You'll be prompted to log into Office using your admin credentials (e.g.,jdoe_admin@DOMAIN_NAME)
+$user = $sAMAccountName + "@DOMAIN_NAME"
+Set-MsolUserLicense -UserPrincipalName $user -RemoveLicenses "reseller-account:O365_BUSINESS_PREMIUM", "reseller-account:O365_BUSINESS"
+Write-Host "O365 Licenses have been removed if present"```
